@@ -21,6 +21,7 @@
 #include "iokitd.h"
 #include <stdexcept>
 #include <cstring>
+#include <cstddef>
 #include <os/log.h>
 #include <dispatch/private.h>
 #include <IOKit/IOReturn.h>
@@ -50,12 +51,16 @@ IOObject::IOObject()
 		throw std::runtime_error("Failed to create dispatch source");
 
 	dispatch_source_set_event_handler(m_dispatchSource, ^{
-		dispatch_mig_server(m_dispatchSource, is_iokit_subsystem.maxsize, iokit_server);
+		dispatch_mig_server(m_dispatchSource, is_iokit_subsystem.maxsize, IOObject::dispatchMessage);
+	});
+	const mach_port_t receivePort = m_port;
+	dispatch_source_set_cancel_handler(m_dispatchSource, ^{
+		mach_port_destroy(mach_task_self(), receivePort);
 	});
 	dispatch_resume(m_dispatchSource);
 
 	mach_port_t	oldTargetOfNotification	= MACH_PORT_NULL;
-	kr = mach_port_request_notification(task, m_port, MACH_NOTIFY_NO_SENDERS, 1, g_deathPort, MACH_MSG_TYPE_MAKE_SEND_ONCE, &oldTargetOfNotification);
+	kr = mach_port_request_notification(task, m_port, MACH_NOTIFY_NO_SENDERS, 1, m_port, MACH_MSG_TYPE_MAKE_SEND_ONCE, &oldTargetOfNotification);
 	if (kr != KERN_SUCCESS)
 		throw std::runtime_error("Failed to setup MACH_NOTIFY_NO_SENDERS");
 
@@ -64,12 +69,44 @@ IOObject::IOObject()
 
 IOObject::~IOObject()
 {
-	if (m_dispatchSource)
+	if (m_dispatchSource) {
+		dispatch_source_cancel(m_dispatchSource);
 		dispatch_release(m_dispatchSource);
+	}
 
 	m_objects.erase(m_port);
 
-	mach_port_deallocate(mach_task_self(), m_port);
+}
+
+boolean_t IOObject::dispatchMessage(mach_msg_header_t* request, mach_msg_header_t* reply)
+{
+    if (request->msgh_id == MACH_NOTIFY_NO_SENDERS &&
+        request->msgh_size == offsetof(mach_no_senders_notification_t, trailer)) {
+        // Each receive port identifies its object. Recheck the kernel's current
+        // sender state: a queued NO_SENDERS may precede a new MAKE_SEND right.
+        auto* object = lookup(request->msgh_local_port);
+        if (object) {
+            mach_port_status_t status = {};
+            mach_msg_type_number_t count = MACH_PORT_RECEIVE_STATUS_COUNT;
+            auto kr = mach_port_get_attributes(mach_task_self(), object->port(),
+                MACH_PORT_RECEIVE_STATUS, (mach_port_info_t)&status, &count);
+            if (kr == KERN_SUCCESS && !status.mps_srights &&
+                status.mps_mscount == ((mach_no_senders_notification_t*)request)->not_count) {
+                // Cancel the receive source before destroying its port. No code
+                // in this handler accesses object after delete.
+                delete object;
+            } else if (kr == KERN_SUCCESS) {
+                mach_port_t previous = MACH_PORT_NULL;
+                mach_port_request_notification(mach_task_self(), object->port(),
+                    MACH_NOTIFY_NO_SENDERS, status.mps_mscount, object->port(),
+                    MACH_MSG_TYPE_MAKE_SEND_ONCE, &previous);
+                if (MACH_PORT_VALID(previous)) mach_port_deallocate(mach_task_self(), previous);
+            }
+        }
+        ((mig_reply_error_t*)reply)->RetCode = MIG_NO_REPLY;
+        return true;
+    }
+    return iokitSaveAuditTrail(request, reply);
 }
 
 void IOObject::retain()

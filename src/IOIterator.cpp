@@ -26,7 +26,12 @@ extern "C" {
 IOIterator::IOIterator(const std::vector<IOObject*>& objects)
 : m_objects(objects)
 {
+	for (auto* object : m_objects) object->retain();
+}
 
+IOIterator::~IOIterator()
+{
+	for (auto* object : m_objects) object->release();
 }
 
 void IOIterator::reset()

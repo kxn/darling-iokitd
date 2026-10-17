@@ -44,6 +44,7 @@ public:
 	static IOObject* lookup(mach_port_t port);
 	static boolean_t deathNotify(mach_msg_header_t *request, mach_msg_header_t *reply);
 private:
+	static boolean_t dispatchMessage(mach_msg_header_t* request, mach_msg_header_t* reply);
 	mach_port_t m_port;
 	dispatch_source_t m_dispatchSource = nullptr;
 	static std::unordered_map<mach_port_t, IOObject*> m_objects;

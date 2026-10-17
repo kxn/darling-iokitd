@@ -1,3 +1,5 @@
+#include <mach/mach_vm.h>
+#include "iokitd.h"
 #include "IORegistryEntry.h"
 #include <stack>
 #include <IOKit/IOCFSerialize.h>
@@ -27,6 +29,11 @@ IORegistryEntry::IORegistryEntry()
 
 IORegistryEntry::~IORegistryEntry()
 {
+	// Registry links must not retain dangling pointers after a dynamic service dies.
+	for (const auto& [plane, parents] : m_parents)
+		for (auto* parent : parents) parent->m_children[plane].erase(this);
+	for (const auto& [plane, children] : m_children)
+		for (auto* child : children) child->m_parents[plane].erase(this);
 	std::unique_lock l(m_entriesByIdMutex);
 	m_entriesById.erase(m_id);
 }
@@ -438,23 +445,19 @@ kern_return_t is_io_registry_entry_from_path
 	return kIOReturnSuccess;
 }
 
-static NSDictionary* findKey(IORegistryEntry* e, const char* plane, NSString* key)
+static id findKey(IORegistryEntry* entry, const char* plane, NSString* key, uint32_t options)
 {
-	NSDictionary* props = e->getProperties();
-	id value = [props objectForKey: key];
-
-	if (value != nil)
-		return @{ key: value };
-	
-	auto set = e->getChildren(plane);
-	for (IORegistryEntry* c : set)
-	{
-		NSDictionary* rv = findKey(c, plane, key);
-		if (rv != nil)
-			return rv;
-	}
-
-	return nil;
+    std::vector<IORegistryEntry*> pending{entry};
+    std::set<IORegistryEntry*> visited;
+    while (!pending.empty()) {
+        auto* current = pending.back(); pending.pop_back();
+        if (!visited.insert(current).second) continue;
+        id value = [current->getProperties() objectForKey:key];
+        if (value) return value;
+        auto adjacent = options & kIORegistryIterateParents ? current->getParents(plane) : current->getChildren(plane);
+        pending.insert(pending.end(), adjacent.begin(), adjacent.end());
+    }
+    return nil;
 }
 
 kern_return_t is_io_registry_entry_get_property_bin
@@ -476,7 +479,7 @@ kern_return_t is_io_registry_entry_get_property_bin
 	*propertiesCnt = 0;
 	*properties = nullptr;
 
-	NSDictionary* retval;
+	id retval;
 
 	NSString* propName = [NSString stringWithUTF8String: property_name];
 
@@ -484,10 +487,10 @@ kern_return_t is_io_registry_entry_get_property_bin
 	{
 		// Recursive search for the property
 		auto set = e->getChildren(plane);
-		retval = findKey(e, plane, propName);
+		retval = findKey(e, plane, propName, options);
 
 		if (!retval)
-			return kIOReturnError; // TODO: or another code?
+			return kIOReturnNotFound;
 	}
 	else
 	{
@@ -496,9 +499,9 @@ kern_return_t is_io_registry_entry_get_property_bin
 		id value = [props objectForKey: propName];
 
 		if (!value)
-			return kIOReturnError; // TODO: or another code?
+			return kIOReturnNotFound;
 
-		retval = @{ propName: value };
+		retval = value;
 	}
 
 	CFDataRef data = IOCFSerialize(retval, kIOCFSerializeToBinary);
@@ -513,3 +516,36 @@ kern_return_t is_io_registry_entry_get_property_bin
     return kr;
 }
 
+
+// A userspace daemon must copy into the actual audited caller's task, never
+// interpret that task's address as a pointer in its own address space.
+static kern_return_t copyPropertyBuffer(mach_vm_address_t buffer, mach_vm_size_t* capacity,
+    io_buf_ptr_t* properties, mach_msg_type_number_t* count, kern_return_t result)
+{
+    if (result != KERN_SUCCESS) return result;
+    if (!buffer || *capacity < *count) { *capacity = 0; return KERN_SUCCESS; }
+    mach_port_t caller = MACH_PORT_NULL;
+    result = g_iokitCurrentCallerPID > 0 ?
+        task_for_pid(mach_task_self(), g_iokitCurrentCallerPID, &caller) : KERN_PROTECTION_FAILURE;
+    if (result == KERN_SUCCESS)
+        result = mach_vm_write(caller, buffer, (vm_offset_t)*properties, *count);
+    if (MACH_PORT_VALID(caller)) mach_port_deallocate(mach_task_self(), caller);
+    *capacity = result == KERN_SUCCESS ? *count : 0;
+    vm_deallocate(mach_task_self(), (vm_address_t)*properties, *count);
+    *properties = nullptr; *count = 0;
+    return result == KERN_SUCCESS ? KERN_SUCCESS : kIOReturnVMError;
+}
+kern_return_t is_io_registry_entry_get_properties_bin_buf(mach_port_t entry,
+    mach_vm_address_t buffer, mach_vm_size_t* capacity, io_buf_ptr_t* properties,
+    mach_msg_type_number_t* count)
+{
+    return copyPropertyBuffer(buffer, capacity, properties, count,
+        is_io_registry_entry_get_properties_bin(entry, properties, count));
+}
+kern_return_t is_io_registry_entry_get_property_bin_buf(mach_port_t entry, io_name_t plane,
+    io_name_t key, uint32_t options, mach_vm_address_t buffer, mach_vm_size_t* capacity,
+    io_buf_ptr_t* properties, mach_msg_type_number_t* count)
+{
+    return copyPropertyBuffer(buffer, capacity, properties, count,
+        is_io_registry_entry_get_property_bin(entry, plane, key, options, properties, count));
+}

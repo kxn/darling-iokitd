@@ -24,6 +24,8 @@
 #import <Foundation/NSDictionary.h>
 #include "IOIterator.h"
 
+class IOMatchingNotification;
+
 class ServiceRegistry
 {
 private:
@@ -31,9 +33,14 @@ private:
 public:
 	static ServiceRegistry* instance();
 	void registerService(IOService* service);
+	void unregisterService(IOService* service);
+	std::vector<IOObject*> matchingServices(NSDictionary* criteria) const;
+	void addNotification(IOMatchingNotification* notification);
+	void removeNotification(IOMatchingNotification* notification);
 	IOIterator* iteratorForMatchingServices(NSDictionary* criteria) const;
 private:
 	std::list<IOService*> m_registeredServices;
+	std::list<IOMatchingNotification*> m_notifications;
 };
 
 #endif

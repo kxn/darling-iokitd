@@ -35,10 +35,13 @@ public:
 	uint32_t busyState() const { return m_busyState; }
 	uint64_t accumulatedBusyTime() const { return m_accumulatedBusyTime; }
 	uint64_t state() const { return m_state; }
+private:
+	friend class ServiceRegistry;
+	bool m_everPublished = false;
 protected:
 	uint32_t m_busyState = 0;
 	uint64_t m_accumulatedBusyTime = 0;
-	uint64_t m_state = kIOServiceRegisteredState | kIOServiceMatchedState;
+	uint64_t m_state = 0;
 };
 
 #endif

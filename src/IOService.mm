@@ -19,6 +19,8 @@
 
 #include "IOService.h"
 #import <Foundation/NSArray.h>
+#import <Foundation/NSString.h>
+#import <Foundation/NSNumber.h>
 
 extern "C" {
 #include "iokitmigServer.h"
@@ -29,46 +31,50 @@ IOService::IOService()
 
 }
 
-// https://unix.superglobalmegacorp.com/xnu/newsrc/iokit/KernelConfigTables.cpp.html
+static bool propertySubset(NSDictionary* actual, id expected)
+{
+    if ([expected isKindOfClass:[NSArray class]]) {
+        for (id choice in expected) if (propertySubset(actual, choice)) return true;
+        return false;
+    }
+    if (![expected isKindOfClass:[NSDictionary class]]) return false;
+    for (id key in expected)
+        if (![expected[key] isEqual:actual[key]]) return false;
+    return true;
+}
 bool IOService::matches(NSDictionary* dict)
 {
-	NSDictionary* ourProps = matchingDictionary();
-
-	for (NSString* key in dict)
-	{
-		NSObject* ourProp = ourProps[key];
-		NSObject* expectedValue = dict[key];
-
-		if ([ourProp isKindOfClass:[NSArray class]])
-		{
-			NSArray* array = (NSArray*) ourProp;
-			if (![array containsObject: expectedValue])
-				return false;
-		}
-		else if (ourProp != nil)
-		{
-			if (![expectedValue isEqual: ourProp])
-				return false;
-		}
-		else
-		{
-			if ([key isEqualToString: @"IONameMatch"])
-			{
-				if (![ourProps[@"IOClass"] isEqual: expectedValue])
-					return false;
-			}
-			else
-				return false;
-		}
-	}
-	return true;
+    NSDictionary* matching = matchingDictionary();
+    NSDictionary* properties = getProperties();
+    for (NSString* key in dict) {
+        ::id value = dict[key];
+        if ([key isEqualToString:@"IOProviderClass"] || [key isEqualToString:@"IOClass"]) {
+            bool found = false;
+            NSArray* classes = [value isKindOfClass:[NSArray class]] ? value : @[value];
+            for (::id name in classes)
+                if ([name isKindOfClass:[NSString class]] && conformsTo([name UTF8String])) found = true;
+            if (!found) return false;
+        } else if ([key isEqualToString:@"IONameMatch"]) {
+            NSString* name = [NSString stringWithUTF8String:getName(kIOServicePlane).c_str()];
+            if ([value isKindOfClass:[NSArray class]]) { if (![value containsObject:name]) return false; }
+            else if (![value isEqual:name]) return false;
+        } else if ([key isEqualToString:@"IORegistryEntryID"]) {
+            if (![value isKindOfClass:[NSNumber class]] || [value unsignedLongLongValue] != id()) return false;
+        } else if ([key isEqualToString:@"IOPropertyMatch"]) {
+            if (!propertySubset(properties,value)) return false;
+        } else {
+            ::id actual = matching[key] ?: properties[key];
+            if (!actual || ![value isEqual:actual]) return false;
+        }
+    }
+    return true;
 }
 
 bool IOService::conformsTo(const char* className)
 {
 	if (strcmp(className, "IOService") == 0)
 		return true;
-	return IOObject::conformsTo(className);
+	return strcmp(className, "IORegistryEntry") == 0 || IOObject::conformsTo(className);
 }
 
 kern_return_t is_io_service_get_state

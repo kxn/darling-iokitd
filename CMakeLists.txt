@@ -29,12 +29,14 @@ set(iokitd_sources
 	src/stubs-powermanagement.c
 	src/iokitd.cpp
 	src/ServiceRegistry.mm
+	src/IOMatchingNotification.mm
 	src/IOObject.cpp
 	src/IOIterator.cpp
 	src/IOService.mm
 	src/IORegistryEntry.mm
 	src/IODisplayConnect.mm
 	src/IODisplayConnectX11.mm
+	src/IOPowerRootDomain.mm
 	src/PowerAssertions.mm
 	src/PowerAssertionsX11.mm
 	src/IOSurfaceRoot.mm

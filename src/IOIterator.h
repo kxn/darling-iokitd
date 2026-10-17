@@ -26,11 +26,12 @@ class IOIterator : public IOObject
 {
 public:
 	IOIterator(const std::vector<IOObject*>& objects);
+	~IOIterator() override;
 
 	const char* className() const override;
 
-	void reset();
-	IOObject* next();
+	virtual void reset();
+	virtual IOObject* next();
 private:
 	std::vector<IOObject*> m_objects;
 	int m_pos = 0;

@@ -32,6 +32,7 @@
 #include "IODisplayConnectX11.h"
 #include "PowerAssertions.h"
 #include "IOSurfaceRoot.h"
+#include "IOPowerRootDomain.h"
 
 extern "C" {
 #include "iokitmigServer.h"
@@ -42,7 +43,7 @@ static const char* SERVICE_NAME = "org.darlinghq.iokitd";
 mach_port_t g_masterPort, g_deathPort, g_powerManagementPort;
 
 static void discoverAllDevices();
-static boolean_t iokitSaveAuditTrail(mach_msg_header_t *message, mach_msg_header_t *reply);
+boolean_t iokitSaveAuditTrail(mach_msg_header_t *message, mach_msg_header_t *reply);
 
 int main(int argc, const char** argv)
 {
@@ -133,10 +134,15 @@ int main(int argc, const char** argv)
 	return 0;
 }
 
-static boolean_t iokitSaveAuditTrail(mach_msg_header_t *message, mach_msg_header_t *reply)
+boolean_t iokitSaveAuditTrail(mach_msg_header_t *message, mach_msg_header_t *reply)
 {
-	const mach_msg_context_trailer_t* trailer = reinterpret_cast<mach_msg_context_trailer_t*>(reinterpret_cast<char*>(message) + message->msgh_size);
-	audit_token_to_au32(trailer->msgh_audit, nullptr, nullptr, nullptr, nullptr, nullptr, &g_iokitCurrentCallerPID, nullptr, nullptr);
+    g_iokitCurrentCallerPID = -1;
+    const auto* trailer = reinterpret_cast<const mach_msg_audit_trailer_t*>(
+        reinterpret_cast<const char*>(message) + ((message->msgh_size + 3) & ~3U));
+    if (trailer->msgh_trailer_type == MACH_MSG_TRAILER_FORMAT_0 &&
+        trailer->msgh_trailer_size >= sizeof(*trailer))
+        audit_token_to_au32(trailer->msgh_audit, nullptr, nullptr, nullptr, nullptr, nullptr,
+            &g_iokitCurrentCallerPID, nullptr, nullptr);
 	return iokit_server(message, reply);
 }
 
@@ -147,4 +153,5 @@ static void discoverAllDevices()
 	IORegistryEntry::root();
 	IODisplayConnectX11::discoverDevices(registry);
 	IOSurfaceRoot::registerSelf(registry);
+	IOPowerRootDomain::registerSelf(registry);
 }
