@@ -32,6 +32,7 @@
 #include "IODisplayConnectX11.h"
 #include "PowerAssertions.h"
 #include "IOSurfaceRoot.h"
+#include "DiskImagesController.h"
 #include "IOPowerRootDomain.h"
 
 extern "C" {
@@ -154,4 +155,5 @@ static void discoverAllDevices()
 	IODisplayConnectX11::discoverDevices(registry);
 	IOSurfaceRoot::registerSelf(registry);
 	IOPowerRootDomain::registerSelf(registry);
+	DiskImagesController::registerSelf(registry);
 }
