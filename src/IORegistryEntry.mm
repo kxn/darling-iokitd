@@ -189,17 +189,16 @@ static void addEntries
 	IORegistryEntry* e,
 	const char* plane,
 	bool children,
-	bool recursively
+	bool recursively,
+	std::set<IORegistryEntry*>& visited
 )
 {
 	auto set = children ? e->getChildren(plane) : e->getParents(plane);
 
-	target.insert(target.end(), set.begin(), set.end());
-
-	if (recursively)
-	{
-		for (auto c : set)
-			addEntries(target, c, plane, children, true);
+	for (auto* entry : set) {
+		if (!visited.insert(entry).second) continue;
+		target.push_back(entry);
+		if (recursively) addEntries(target, entry, plane, children, true, visited);
 	}
 }
 
@@ -208,16 +207,14 @@ static mach_port_t ioRegistryCreateIterator
 	IORegistryEntry* root,
 	io_name_t plane,
 	uint32_t options,
-	bool includeRoot,
 	bool children
 )
 {
 	std::vector<IOObject*> objects;
-	if (includeRoot)
-		objects.push_back(root);
-
-	// Depth-First Search
-	addEntries(objects, root, plane, children, options & kIORegistryIterateRecursively);
+	// XNU IORegistryIterator starts at root but first yields a related entry.
+	// Retain a visited set so shared descendants and cycles cannot repeat it.
+	std::set<IORegistryEntry*> visited = {root};
+	addEntries(objects, root, plane, children, options & kIORegistryIterateRecursively, visited);
 
 	IOIterator* i = new IOIterator(objects);
 
@@ -239,7 +236,9 @@ kern_return_t is_io_registry_entry_create_iterator
 	if (!e)
 		return kIOReturnBadArgument;
 
-	*iterator = ioRegistryCreateIterator(e, plane, options, true, true);
+	if (options & ~(kIORegistryIterateRecursively | kIORegistryIterateParents))
+		return kIOReturnUnsupported;
+	*iterator = ioRegistryCreateIterator(e, plane, options, !(options & kIORegistryIterateParents));
 	return kIOReturnSuccess;
 }
 
@@ -251,7 +250,11 @@ kern_return_t is_io_registry_create_iterator
 	mach_port_t *iterator
 )
 {
-	*iterator = ioRegistryCreateIterator(IORegistryEntry::root(), plane, options, true, true);
+	*iterator = MACH_PORT_NULL;
+	if (master_port != g_masterPort) return kIOReturnNotPrivileged;
+	if (options & ~(kIORegistryIterateRecursively | kIORegistryIterateParents))
+		return kIOReturnUnsupported;
+	*iterator = ioRegistryCreateIterator(IORegistryEntry::root(), plane, options, !(options & kIORegistryIterateParents));
 	return kIOReturnSuccess;
 }
 
@@ -268,7 +271,7 @@ kern_return_t is_io_registry_entry_get_child_iterator
 	if (!e)
 		return kIOReturnBadArgument;
 
-	*iterator = ioRegistryCreateIterator(e, plane, 0, false, true);
+	*iterator = ioRegistryCreateIterator(e, plane, 0, true);
 	return kIOReturnSuccess;
 }
 
@@ -285,7 +288,7 @@ kern_return_t is_io_registry_entry_get_parent_iterator
 	if (!e)
 		return kIOReturnBadArgument;
 
-	*iterator = ioRegistryCreateIterator(e, plane, 0, false, false);
+	*iterator = ioRegistryCreateIterator(e, plane, 0, false);
 	return kIOReturnSuccess;
 }
 

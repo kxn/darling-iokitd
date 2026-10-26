@@ -9,22 +9,26 @@
 #include <Foundation/NSNumber.h>
 
 class DiskImagesController final : public IOService {
+    const char* m_className;
+    explicit DiskImagesController(const char* name) : m_className(name) {}
 public:
-    const char* className() const override { return "AppleDiskImagesController"; }
+    const char* className() const override { return m_className; }
     NSDictionary* matchingDictionary() override {
-        return @{ @"IOClass": @"AppleDiskImagesController" };
+        return @{ @"IOClass": [NSString stringWithUTF8String:m_className] };
     }
     NSDictionary* getProperties() override {
-        return @{ @"IOClass": @"AppleDiskImagesController",
+        return @{ @"IOClass": [NSString stringWithUTF8String:m_className],
                   @"DarlingDiskImagesBackend": @"Darling managed images",
                   @"DarlingDiskImagesSupportsAttach": @NO };
     }
     static void registerSelf(ServiceRegistry* registry) {
-        auto* controller = new DiskImagesController;
-        controller->registerInPlane(kIOServicePlane, "AppleDiskImagesController",
-                                    IORegistryEntry::root());
-        registry->registerService(controller);
-        controller->release();
+        // The two generations enumerate distinct managed-media namespaces.
+        for (const char* name : {"AppleDiskImagesController", "IOHDIXController"}) {
+            auto* controller = new DiskImagesController(name);
+            controller->registerInPlane(kIOServicePlane, name, IORegistryEntry::root());
+            registry->registerService(controller);
+            controller->release();
+        }
     }
 };
 #endif
