@@ -5,6 +5,7 @@
 #import <Foundation/NSString.h>
 #import <Foundation/NSNumber.h>
 #include "IOUserClient.h"
+#include "ServiceUserConnection.h"
 #include "LinuxResumeClock.h"
 #include "iokitd.h"
 #include <IOKit/IOMessage.h>
@@ -138,14 +139,17 @@ kern_return_t is_io_service_open_extended(mach_port_t service, task_t owningTask
     kern_return_t* result, mach_port_t* connection) {
     *connection = MACH_PORT_NULL;
     *result = kIOReturnUnsupported;
-    auto* domain = dynamic_cast<IOPowerRootDomain*>(IOObject::lookup(service));
+    auto* object = IOObject::lookup(service);
+    auto* domain = dynamic_cast<IOPowerRootDomain*>(object);
+    auto* userService = dynamic_cast<IOUserClient*>(object);
     pid_t owner = -1;
-    if (!domain) *result = kIOReturnUnsupported;
+    if (!domain && !userService) *result = kIOReturnUnsupported;
     else if (type != 0 || propertiesCount) *result = kIOReturnUnsupported;
     else if (pid_for_task(owningTask, &owner) != KERN_SUCCESS || owner <= 0 || owner != g_iokitCurrentCallerPID)
         *result = kIOReturnNotPermitted;
     else {
-        auto* client = new PowerConnection(domain);
+        IOUserClient* client = domain ? static_cast<IOUserClient*>(new PowerConnection(domain)) :
+            static_cast<IOUserClient*>(new ServiceUserConnection(userService, owner));
         *connection = client->port();
         client->releaseLater();
         *result = kIOReturnSuccess;
@@ -156,6 +160,7 @@ kern_return_t is_io_service_open_extended(mach_port_t service, task_t owningTask
     return KERN_SUCCESS;
 }
 kern_return_t is_io_service_close(mach_port_t connection) {
+    if (auto* generic = dynamic_cast<ServiceUserConnection*>(IOObject::lookup(connection))) return generic->close();
     auto* client = dynamic_cast<PowerConnection*>(IOObject::lookup(connection));
     if (!client || client->closed) return kIOReturnNotOpen;
     client->closed = true;
@@ -163,6 +168,7 @@ kern_return_t is_io_service_close(mach_port_t connection) {
 }
 kern_return_t is_io_connect_get_service(mach_port_t connection, mach_port_t* service) {
     *service = MACH_PORT_NULL;
+    if (auto* generic = dynamic_cast<ServiceUserConnection*>(IOObject::lookup(connection))) return generic->copyService(service);
     auto* client = dynamic_cast<PowerConnection*>(IOObject::lookup(connection));
     if (!client || client->closed) return kIOReturnNotOpen;
     *service = client->domain->port();

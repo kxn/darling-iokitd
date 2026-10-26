@@ -29,6 +29,7 @@ class IOUserClient : public IOService
 {
 public:
 	IOReturn externalMethod(uint32_t selector, IOExternalMethodArguments *arguments);
+	virtual IOReturn validateCaller() const { return kIOReturnSuccess; }
 	IOExternalMethod *getTargetAndMethodForIndex(IOService **targetP, UInt32 index);
 	virtual IOExternalMethod *getExternalMethodForIndex(UInt32 index) = 0;
 };

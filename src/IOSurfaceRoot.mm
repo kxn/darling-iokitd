@@ -141,10 +141,11 @@ IOExternalMethod *IOSurfaceRoot::getExternalMethodForIndex(UInt32 index)
 
 	registerCaller();
 
-	if (index >= sizeof(methods)/sizeof(IOExternalMethod))
+	if (index >= sizeof(methods)/sizeof(IOExternalMethod) || !methods[index].func)
 		return nullptr;
 
-	static IOExternalMethod method = methods[index];
+	static IOExternalMethod method;
+	method = methods[index];
 	method.object = this;
 	return &method;
 }

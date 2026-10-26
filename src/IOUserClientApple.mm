@@ -32,6 +32,7 @@ extern "C" {
 }
 #include "IOUserClientApple.h"
 #include "IOUserClient.h"
+#include "iokitd.h"
 #include <cstdio>
 
 #define DTRACE_IO2(...)
@@ -384,8 +385,12 @@ is_io_connect_method
 	IOUserClient* client = dynamic_cast<IOUserClient*>(IOObject::lookup(connection));
 	if (!client)
 		return kIOReturnBadArgument;
+	IOReturn validation = client->validateCaller();
+	if (validation != kIOReturnSuccess) return validation;
+	if (getenv("DARLING_IOKIT_TRACE_USER_CLIENTS"))
+		printf("DARLING_IOKIT_USER_METHOD pid=%d selector=%u scalar_in=%u struct_in=%u scalar_out=%u struct_out=%u\n", g_iokitCurrentCallerPID, selector, scalar_inputCnt, inband_inputCnt, *scalar_outputCnt, *inband_outputCnt);
 
-	IOExternalMethodArguments args;
+	IOExternalMethodArguments args = {};
 	IOReturn ret;
 	//IOMemoryDescriptor * inputMD  = NULL;
 	//IOMemoryDescriptor * outputMD = NULL;
